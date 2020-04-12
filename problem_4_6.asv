@@ -1,0 +1,13 @@
+load surface.mat
+
+mkdir jpg
+for i=1:2
+   min_geo( X,Y,Z ,start,ending)
+  fig1=figure;
+  surf(X,Y,Z,D); 
+  axis image; 
+  shading interp;
+  title('Minimum geodistcs','FontSize',14,'FontWeight','bold');
+  print(fig1, '-djpeg',['jpg/',sprintf('fm%d.jpg',i)]);
+end
+

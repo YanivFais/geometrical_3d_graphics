@@ -1,0 +1,49 @@
+function [ d_3 ] = update_step( V,d,Velocity )
+%fast marching update step from two vertices and distances 
+% (ignoring obtuse triangles)
+% V in the form (P1,P2) where P1/2 in the form (x;y)
+% d = [d1;d2]
+% Veclocity is velocity input in (x1,x2,x3)
+
+% need to solve:
+% d_3^2*(1^T*Q*1) - d_3*(2*1^T*Q*d) + d^T*Q*d-1=0
+
+Q = V'*V;
+
+if (d(1)==Inf)
+  if (d(2)==Inf)
+      d_3 = Inf;
+      return;
+  else 
+      d_3 = sqrt(V(2,1)*V(2,1)+V(2,2)*V(2,2))+d(2); % distance from P2
+  end
+else
+  if (d(2)==Inf)
+      d_3 = sqrt(V(1,1)*V(1,1)+V(1,2)*V(1,2))+d(1); % distance from P1
+  end
+
+  a = [1,1]*Q*[1;1];
+  b = -2*[1,1]*Q*d;
+  c = d'*Q*d-1;
+  [d_3a,d_3b ] = quadratic(a,b,c);
+  d_3 = max(d_3a,d_3b);
+end
+
+if (~isreal(d_3) | d_3<0)
+    d_3 = Inf;
+else
+    % find the propagation direction n=V^-T*(d-d3*1)
+    v_nan = isnan(V);
+    if (v_nan(1,1) | v_nan(1,2) | v_nan(2,1) | v_nan(2,2))
+    else
+      n=(V^(-1))'*(d-d_3*[1;1]);
+      if (Q*V'*n<0) % monotonically condition violated
+          d_x1 = d(1) + sqrt(V(1,1)*V(1,1)+V(1,2)*V(1,2));
+          d_x2 = d(2) + sqrt(V(2,1)*V(2,1)+V(2,2)*V(2,2));
+          d_3 = min(d_x1,d_x2);
+      end
+    end
+end
+
+end
+

@@ -1,0 +1,194 @@
+function [ D , iter ] = fm( X,Y,Z,D0,V,change_stop,perc_stop,max_iter)
+%fast marching method for distance computation over mesh using raster scan
+%   
+
+[rows columns] = size(X);
+
+   % for programming simplicity with boundary indices
+   % take a matrix and add a row on top and  bottom
+   % add a column on left and right 
+   % set values to closed input matrix values
+    function [M] = expand(Min) 
+       M = zeros(rows+2,columns+2);
+       M(2:rows+1,2:columns+1) = Min;
+       for r=1:rows+2
+           if (r==1 || r==rows+2)
+               for c=2:columns+2
+                   M(r,c)=Inf;
+               end
+           end
+           M(r,1) = Inf;
+           M(r,columns+2) = Inf;
+       end
+    end
+
+Xe = expand(X);
+Ye = expand(Y);
+Ze = expand(Z);
+
+
+% calculate a distance between two 3D points
+    function [d] = distance3D(p1,p2)
+        d = 0;
+        for i=1:3
+            d = d+(p2(i)-p1(i))*(p2(i)-p1(i));
+        d = sqrt(d);
+        end
+    end
+    
+     % convert 3D triangle (3 points each of 3D) into a  2D triangle
+     % (3 points each of 2D)
+    function [T2D] = triangle3D_2_2D(p1,p2,p3)
+        % calculate 3D distance of triangle
+        d12 = distance3D(p1,p2);
+        d13 = distance3D(p1,p3);
+        d23 = distance3D(p2,p3);
+        % new points x1,x2,x3 in 2D - assume w.l.o.g x3 in (0,0),x2 in (d12,0)
+        % T2D(:,3) = [0,0]; - don't need to really assign values here
+        T2D(:,2) = [d12,0];
+        if (d12==0)
+            T2D(:,1) = [0;d23];
+        else
+            T2D(1,1) = (d12*d12+d13*d13-d23*d23)/(2*d12);
+            T2D(2,1) = sqrt(d13*d13-T2D(1,1)*T2D(1,1));
+        end
+    end
+    
+    % calculate distance over original data in 8 triangles
+    % assuming i,j>1 & i,j < size-1
+     function [triangles_8_neighbors] = triangles_8_neighboors_3D_2_2D(i,j)
+          p1 = [Xe(i-1,j-1), Ye(i-1,j-1) , Ze(i-1,j-1)];
+          p2 = [Xe(i-1,j),Ye(i-1,j),Ze(i-1,j)];
+          p3 = [Xe(i-1,j+1),Ye(i-1,j+1),Ze(i-1,j+1)];
+          p4 = [Xe(i,j-1), Ye(i,j-1) , Ze(i,j-1)];
+          p5 = [Xe(i,j),Ye(i,j),Ze(i,j)];
+          p6 = [Xe(i,j+1),Ye(i,j+1),Ze(i,j+1)];
+          p7 = [Xe(i+1,j-1), Ye(i+1,j-1) , Ze(i+1,j-1)];
+          p8 = [Xe(i+1,j),Ye(i+1,j),Ze(i+1,j)];
+          p9 = [Xe(i+1,j+1),Ye(i+1,j+1),Ze(i+1,j+1)];
+          % (Upper/Down),(Left/Right),(Down/Up) triangle
+          dULL = triangle3D_2_2D(p5,p1,p4);
+          dULU = triangle3D_2_2D(p5,p1,p2);
+          dURU = triangle3D_2_2D(p5,p2,p3);
+          dURL = triangle3D_2_2D(p5,p2,p6);
+          dLLU = triangle3D_2_2D(p5,p4,p7);
+          dLLL = triangle3D_2_2D(p5,p7,p8);
+          dLRL = triangle3D_2_2D(p5,p8,p9);
+          dLRU = triangle3D_2_2D(p5,p9,p6);
+          triangles_8_neighbors = struct( 'dULD', dULL, 'dULU', dULU, 'dURU', dURU , 'dURD',dURL,'dDLU' , dLLU, 'dDLD' , dLLL , 'dDRD' , dLRL , 'dDRU',dLRU);
+     end
+    
+       % calculagte all the triangles into 2D and create an 8 neighboor pre
+       % calculated struct for each point with the triangle where the point
+       % is at coordinates 0,0 and has 8 triangles sorrunding the point
+       function [triangles_8neighboors_matrix] = calculate_8neighboors_2D_triangles()
+           for r=2:rows+1
+               for c=2:columns+1
+                   triangles_8neighboors_matrix(r-1,c-1) = triangles_8_neighboors_3D_2_2D(r,c);
+               end
+           end
+       end
+   
+   % calculate the normal matrix of the surface , for each index produce
+   % its 8 neighboors normal
+   function normal = surface_normal(X,Y,Z)
+        Xinf = inf(rows+2,columns+2); Xinf(2:end-1,2:end-1)=X;X=Xinf;
+        Yinf = inf(rows+2,columns+2); Yinf(2:end-1,2:end-1)=Y;Y=Yinf;
+        Zinf = inf(rows+2,columns+2); Zinf(2:end-1,2:end-1)=Z;Z=Zinf;
+        normal = inf(rows,columns,8);
+
+        for i = 2:rows+1
+            for j = 2:columns+1
+                normal(i-1,j-1,1)=sqrt((X(i,j)-X(i-1,j-1))^2+(Y(i,j)-Y(i-1,j-1))^2+(Z(i,j)-Z(i-1,j-1))^2);
+                normal(i-1,j-1,2)=sqrt((X(i,j)-X(i-1,j))^2+(Y(i,j)-Y(i-1,j))^2+(Z(i,j)-Z(i-1,j))^2);
+                normal(i-1,j-1,3)=sqrt((X(i,j)-X(i-1,j+1))^2+(Y(i,j)-Y(i-1,j+1))^2+(Z(i,j)-Z(i-1,j+1))^2);
+                normal(i-1,j-1,4)=sqrt((X(i,j)-X(i,j+1))^2+(Y(i,j)-Y(i,j+1))^2+(Z(i,j)-Z(i,j+1))^2);
+                normal(i-1,j-1,5)=sqrt((X(i,j)-X(i+1,j+1))^2+(Y(i,j)-Y(i+1,j+1))^2+(Z(i,j)-Z(i+1,j+1))^2);
+                normal(i-1,j-1,6)=sqrt((X(i,j)-X(i+1,j))^2+(Y(i,j)-Y(i+1,j))^2+(Z(i,j)-Z(i+1,j))^2);
+                normal(i-1,j-1,7)=sqrt((X(i,j)-X(i+1,j-1))^2+(Y(i,j)-Y(i+1,j-1))^2+(Z(i,j)-Z(i+1,j-1))^2);
+                normal(i-1,j-1,8)=sqrt((X(i,j)-X(i,j-1))^2+(Y(i,j)-Y(i,j-1))^2+(Z(i,j)-Z(i,j-1))^2);
+            end
+        end
+   end
+
+   % perform raster scan starting from  one corner
+    function raster_scan_corner(triangles_8neighboors_matrix,colStart,colIter,colEnd,rowStart,rowIter,rowEnd,triangle1Type,triangle2Type,V,normal,tA,tB,tC)
+        row = rowStart;
+        condRow = 0;
+        while (~condRow)
+            col = colStart;
+            condCol = 0;
+            while (~condCol)
+                t1 = triangles_8neighboors_matrix(row,col).(triangle1Type);
+                t2 = triangles_8neighboors_matrix(row,col).(triangle2Type);
+                dA = D(row-rowIter+1,col-colIter+1);
+                dB = D(row+1,col-colIter+1);
+                dC = D(row-rowIter+1,col+1);
+                vA = V(row-rowIter+1,col-colIter+1);
+                vB = V(row+1,col-colIter+1);
+                vC = V(row-rowIter+1,col-colIter+1);
+                v3 = V(row+1,col+1);
+                nA = normal(row,col,tA);
+                nB = normal(row,col,tB);
+                nC = normal(row,col,tC);
+                d3_AB = update_step(t1, [dA;dB] , [vA,vB,v3] ,[nA,nB]) ;
+                d3_AC = update_step(t2,[dA;dC],[vA,vC,v3],[nA,nC]);
+                %sprintf('row=%d,col=%d,directionRow=%d,directionCol=%d,%d,%d,%d,d3_AB=%d,d3_AC=%d',row,col,rowIter,colIter,dA,dB,dC,d3_AB,d3_AC)
+                D(row+1,col+1) = min([D(row+1,col+1),d3_AB,d3_AC]);
+                condCol = (col==colEnd);
+                col = col + colIter;
+            end
+            condRow = (row == rowEnd);
+            row = row + rowIter;
+        end
+    end
+   
+   % perform raster scan iteration starting from  4 different corners once
+    function [change] = raster_scan_iter(triangles_8neighboors_matrix,V,normal)
+            D_start = D;
+            raster_scan_corner(triangles_8neighboors_matrix,1,1,columns,1,1,rows,'dULD','dULU',V,normal,4,1,2);
+            raster_scan_corner(triangles_8neighboors_matrix,columns,-1,1,1,1,rows,'dURD','dURU',V,normal,3,5,2);
+            raster_scan_corner(triangles_8neighboors_matrix,1,1,columns,rows,-1,1,'dDLU','dDLD',V,normal,6,7,4);
+            raster_scan_corner(triangles_8neighboors_matrix,columns,-1,1,rows,-1,1,'dDRU','dDRD',V,normal,8,5,7);
+            difference = D-D_start;
+            difference = difference(2:rows+1,2:columns+1);
+            change = sum(sum(abs(difference)));
+    end
+
+
+% main
+  D = expand(D0);
+  Ve = expand(V);
+  % calculate the surface normal
+  normal = surface_normal(X,Y,Z);
+  % calculate the 8 neighboor triangles in 2D for each index
+  triangles_8neighboors_matrix=calculate_8neighboors_2D_triangles();
+  
+  
+  % start raster scan iteration with stop condition of:
+  % low limit of sum of absolute changes
+  % percentage of change in iteration
+  % maximal iterations 
+  
+  change = 9E99;
+  change_perc = 100;
+  iter = 0;
+  change_old = change;
+  while ((change>change_stop) && (change_perc>perc_stop) && iter < max_iter)
+      change = raster_scan_iter(triangles_8neighboors_matrix,Ve,normal);
+      if (isnan(change) | (change==Inf))
+          change = change_stop + 9E99;
+          change_perc = perc_stop+1;
+      else
+          change_perc = (1-(change/change_old))*100;
+      end
+      iter = iter + 1;
+      change_old = change;
+  end
+  
+  % rescale back D
+  D = D(2:rows+1,2:columns+1);
+  %save vars.mat;
+  
+end
+
